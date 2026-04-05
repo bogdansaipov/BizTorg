@@ -1,0 +1,111 @@
+services:
+
+  # ── PostgreSQL database ────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: biztorg_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       ${DB_DATABASE:-biztorg}
+      POSTGRES_USER:     ${DB_USERNAME:-biztorg}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-secret}
+    ports:
+      - "${DB_FORWARD_PORT:-5432}:5432"
+    volumes:
+      - biztorg_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-biztorg} -d ${DB_DATABASE:-biztorg}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── PHP-FPM application ────────────────────────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: app
+    image: biztorg-app
+    container_name: biztorg_app
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DB_CONNECTION: pgsql
+      DB_HOST:       postgres
+      DB_PORT:       5432
+      DB_DATABASE:   ${DB_DATABASE:-biztorg}
+      DB_USERNAME:   ${DB_USERNAME:-biztorg}
+      DB_PASSWORD:   ${DB_PASSWORD:-secret}
+      RUN_MIGRATIONS: ${RUN_MIGRATIONS:-true}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - app_storage:/var/www/html/storage
+
+  # ── Nginx web server ───────────────────────────────────────────────────────
+  nginx:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: nginx
+    container_name: biztorg_nginx
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-80}:80"
+    volumes:
+      - app_storage:/var/www/html/storage:ro
+    depends_on:
+      - app
+
+  # ── Queue worker ───────────────────────────────────────────────────────────
+  queue:
+    image: biztorg-app
+    container_name: biztorg_queue
+    restart: unless-stopped
+    command: ["php", "artisan", "queue:work", "--verbose", "--tries=3", "--timeout=90"]
+    env_file: .env
+    environment:
+      DB_CONNECTION: pgsql
+      DB_HOST:       postgres
+      DB_PORT:       5432
+      DB_DATABASE:   ${DB_DATABASE:-biztorg}
+      DB_USERNAME:   ${DB_USERNAME:-biztorg}
+      DB_PASSWORD:   ${DB_PASSWORD:-secret}
+      RUN_MIGRATIONS: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      app:
+        condition: service_started
+    volumes:
+      - app_storage:/var/www/html/storage
+
+  # ── Laravel Reverb WebSocket server ───────────────────────────────────────
+  reverb:
+    image: biztorg-app
+    container_name: biztorg_reverb
+    restart: unless-stopped
+    command: ["php", "artisan", "reverb:start", "--host=0.0.0.0", "--port=8080", "--no-interaction"]
+    env_file: .env
+    environment:
+      DB_CONNECTION: pgsql
+      DB_HOST:       postgres
+      DB_PORT:       5432
+      DB_DATABASE:   ${DB_DATABASE:-biztorg}
+      DB_USERNAME:   ${DB_USERNAME:-biztorg}
+      DB_PASSWORD:   ${DB_PASSWORD:-secret}
+      RUN_MIGRATIONS: "false"
+    ports:
+      - "${REVERB_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      app:
+        condition: service_started
+    volumes:
+      - app_storage:/var/www/html/storage
+
+volumes:
+  biztorg_pg_data:
+  app_storage:

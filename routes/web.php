@@ -1,103 +1,106 @@
 <?php
 
-use App\Http\Controllers\Api\Auth\SocialApiAuthController;
-use App\Http\Controllers\ProfileController;
-use Illuminate\Support\Facades\Route;
-use App\Http\Controllers\IndexController;
-use App\Http\Controllers\CategoryController;
 use App\Http\Controllers\AttributeAttributeValueController;
 use App\Http\Controllers\Auth\SocialAuthController;
-use App\Http\Controllers\Auth\AuthenticatedSessionController;
+use App\Http\Controllers\CategoryController;
+use App\Http\Controllers\IndexController;
 use App\Http\Controllers\ProductController;
+use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\SitemapController;
-use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Route;
+use TCG\Voyager\Facades\Voyager;
 
-use function Pest\Laravel\post;
+/*
+|--------------------------------------------------------------------------
+| Public routes
+|--------------------------------------------------------------------------
+*/
 
-Route::get('/',  [IndexController::class, 'index'])->name('index.show');
+Route::get('/', [IndexController::class, 'index'])->name('index.show');
+Route::get('/get-paginated-products', [IndexController::class, 'getPaginatedProducts'])->name('products.paginate');
 
-Route::get('/category/{slug}', [CategoryController::class, 'index'])->name('category.show');
+// Product detail (public)
+Route::get('/obyavlenie/{slug}', [ProductController::class, 'getProduct'])->name('product.get');
 
-Route::get('auth/google', [SocialAuthController::class, 'redirectToGoogle'])->name('google.redirect');
+// Category browsing (public)
+Route::get('/category/{slug}',            [CategoryController::class, 'index'])->name('category.show');
+Route::get('/category/{slug}/filter',     [CategoryController::class, 'filterProducts'])->name('category.filter');    // Needs verification — method may not exist
+Route::get('/category/{slug}/attributes', [CategoryController::class, 'getAttributes'])->name('category.attributes'); // Needs verification — method may not exist
 
-Route::get('auth/google/callback', [SocialAuthController::class, 'handleGoogleCallback']);
+// Sitemap
+Route::get('/sitemap.xml', [SitemapController::class, 'generateSitemap']);
 
-Route::get('auth/facebook', [SocialAuthController::class, 'redirectToFacebook'])->name('facebook.redirect');
+// Static pages
+Route::get('/privacy-policy-document', fn () => view('privacy_policy'));
+Route::get('/pages-facebook',           fn () => view('pages_show'));
 
-Route::get('auth/facebook/callback', [SocialAuthController::class, 'handleFacebookCallback']);
+/*
+|--------------------------------------------------------------------------
+| Social OAuth
+|--------------------------------------------------------------------------
+*/
 
-Route::get('auth/telegram', [SocialAuthController::class, 'redirectToTelegram'])->name('telegram.redirect');
-
-Route::get('auth/telegram/callback', [SocialAuthController::class, 'handleTelegramCallback']);
-
-// Route::get('/profile/view', function () {
-//     return view('profile');
-// })->middleware(['auth', 'verified'])->name('profile');
-
-
-
-Route::middleware('auth')->group(function () {
-
-    Route::prefix('profile')->group(function () {
-        Route::get('/', [ProfileController::class, 'getUserData'])->name('profile.view');
-        Route::post('create/new', [ProfileController::class, 'store'])->name('profile.store');
-        Route::get('create', [ProfileController::class, 'create'])->name('profile.navigate');
-
-        Route::get('products', [ProfileController::class, 'getUserProducts'])->name('profile.products');
-
-        Route::get('favorites', [ProfileController::class, 'getUserFavorites'])->name('profile.favorites');
-
-        Route::get('addProduct', function () {
-            $section = 'add';
-            return view('products.add_product')->with('section', $section);
-        })->name('profile.addProduct');
-
-        Route::get('edit', [ProfileController::class, 'edit'])->name('profile.edit');
-
-        Route::patch('update', [ProfileController::class, 'update'])->name('profile.update');
-
-        Route::delete('delete', [ProfileController::class, 'destroy'])->name('profile.destroy');
-    });
+Route::prefix('auth')->group(function () {
+    Route::get('google',             [SocialAuthController::class, 'redirectToGoogle'])->name('google.redirect');
+    Route::get('google/callback',    [SocialAuthController::class, 'handleGoogleCallback']);
+    Route::get('facebook',           [SocialAuthController::class, 'redirectToFacebook'])->name('facebook.redirect');
+    Route::get('facebook/callback',  [SocialAuthController::class, 'handleFacebookCallback']);
+    Route::get('telegram',           [SocialAuthController::class, 'redirectToTelegram'])->name('telegram.redirect');
+    Route::get('telegram/callback',  [SocialAuthController::class, 'handleTelegramCallback']);
 });
 
-Route::post('/favorites/toggle', [ProfileController::class, 'toggleFavorites'])->name('favorites.toggle');
+/*
+|--------------------------------------------------------------------------
+| Authenticated web routes
+|--------------------------------------------------------------------------
+*/
 
 Route::middleware('auth')->group(function () {
-    Route::post('/product/store', [ProductController::class, 'createProduct'])->name('products.store');
-    Route::put('/product/edit', [ProductController::class, 'editProduct'])->name('products.update');
-    Route::get('product/fetch/{id}', [ProductController::class, 'fetchSingleProduct'])->name('product.get.edit');
-    Route::get('/fetch-attributes', [ProductController::class, 'fetchAttributesBySubcategory'])->name('fetch.attributes');
-    Route::get('/product/add', [ProductController::class, 'fetchProductAttributes'])->name('product.fetch');
-    Route::get('/regions/parents', [ProductController::class, 'getParentRegions']);
+
+    // ── Profile ──────────────────────────────────────────────────────────────
+    Route::prefix('profile')->group(function () {
+        Route::get('/',           [ProfileController::class, 'getUserData'])->name('profile.view');
+        Route::get('create',      [ProfileController::class, 'create'])->name('profile.navigate');
+        Route::post('create/new', [ProfileController::class, 'store'])->name('profile.store');
+        Route::get('edit',        [ProfileController::class, 'edit'])->name('profile.edit');
+        Route::patch('update',    [ProfileController::class, 'update'])->name('profile.update');
+        Route::delete('delete',   [ProfileController::class, 'destroy'])->name('profile.destroy');
+        Route::get('products',    [ProfileController::class, 'getUserProducts'])->name('profile.products');
+        Route::get('favorites',   [ProfileController::class, 'getUserFavorites'])->name('profile.favorites');
+        Route::get('addProduct',  fn () => view('products.add_product')->with('section', 'add'))->name('profile.addProduct');
+    });
+
+    // ── Favorites ────────────────────────────────────────────────────────────
+    Route::post('/favorites/toggle', [ProfileController::class, 'toggleFavorites'])->name('favorites.toggle');
+
+    // ── Products ─────────────────────────────────────────────────────────────
+    Route::post('/product/store',              [ProductController::class, 'createProduct'])->name('products.store');
+    Route::put('/product/edit',                [ProductController::class, 'editProduct'])->name('products.update');
+    Route::get('/product/fetch/{id}',          [ProductController::class, 'fetchSingleProduct'])->name('product.get.edit');
+    Route::get('/fetch-attributes',            [ProductController::class, 'fetchAttributesBySubcategory'])->name('fetch.attributes');
+    Route::get('/product/add',                 [ProductController::class, 'fetchProductAttributes'])->name('product.fetch');
+    Route::delete('/product/image/{id}',       [ProductController::class, 'deleteImage'])->name('product.image.delete');
+
+    // ── Regions (used by product form) ────────────────────────────────────────
+    Route::get('/regions/parents',             [ProductController::class, 'getParentRegions']);
     Route::get('/regions/children/{parentId}', [ProductController::class, 'getChildRegions']);
 });
 
-Route::get('/obyavlenie/{slug}', [ProductController::class, 'getProduct'])->name('product.get');
-Route::delete('/product/image/{id}', [ProductController::class, 'deleteImage'])->name('product.image.delete');
-Route::get('/privacy-policy-document', function () {
-    return view('privacy_policy');
-});
-
-Route::get('/pages-facebook', function () {
-    return view('pages_show');
-});
-
-Route::get('/sitemap.xml', [SitemapController::class, 'generateSitemap']);
-
-Route::get('/get-paginated-products', [IndexController::class, 'getPaginatedProducts'])->name('products.paginate');
-
-Route::get('/category/{slug}/filter', [CategoryController::class, 'filterProducts'])->name('category.filter');
-
-// Route::get('/category/{slug}/attributes', [CategoryController::class, 'getAttributes']);
-
-Route::get('/category/{slug}/attributes', [CategoryController::class, 'getAttributes'])->name('category.attributes');
+/*
+|--------------------------------------------------------------------------
+| Standard auth routes (login, register, password reset, verification)
+|--------------------------------------------------------------------------
+*/
 
 require __DIR__ . '/auth.php';
 
-use App\Models\Product;
-use TCG\Voyager\Facades\Voyager;
+/*
+|--------------------------------------------------------------------------
+| Admin panel (Voyager)
+|--------------------------------------------------------------------------
+*/
 
-Route::group(['prefix' => 'admin'], function () {
+Route::prefix('admin')->group(function () {
     Voyager::routes();
 
     Route::post('attribute-attribute-values', [AttributeAttributeValueController::class, 'store'])

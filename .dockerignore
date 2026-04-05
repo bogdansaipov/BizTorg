@@ -1,0 +1,48 @@
+# Version control
+.git
+.gitignore
+.gitattributes
+.github
+
+# Dependencies (reinstalled during build)
+node_modules
+vendor
+
+# Environment files
+.env
+.env.backup
+.env.production
+
+# Laravel bootstrap cache (regenerated at runtime via artisan)
+bootstrap/cache/*.php
+
+# Runtime storage (mounted as Docker volumes)
+storage/logs
+storage/framework/cache/*
+storage/framework/sessions/*
+storage/framework/views/*
+storage/framework/testing/*
+storage/app/public
+public/storage
+
+# Build artifacts (rebuilt during Docker build)
+public/hot
+public/build
+
+# Dev / test artifacts
+tests
+.phpunit.cache
+.pest
+
+# IDE / OS files
+.idea
+.vscode
+.codex
+.DS_Store
+Thumbs.db
+
+# Misc
+*.md
+debug-screenshot.png
+npm-debug.log
+yarn-error.log

@@ -16,8 +16,8 @@ class ProfileUpdateRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'name' => ['required', 'string', 'max:255'],
-            'email' => [
+            'name'      => ['required', 'string', 'max:255'],
+            'email'     => [
                 'required',
                 'string',
                 'lowercase',
@@ -25,6 +25,12 @@ class ProfileUpdateRequest extends FormRequest
                 'max:255',
                 Rule::unique(User::class)->ignore($this->user()->id),
             ],
+            'phone'     => ['required', 'string', 'max:20'],
+            'address'   => ['required', 'string', 'max:255'],
+            'region_id' => ['nullable', 'exists:regions,id'],
+            'avatar'    => ['nullable', 'image', 'mimes:jpeg,png,jpg,gif,svg', 'max:2048'],
+            'latitude'  => ['required', 'numeric', 'between:-90,90'],
+            'longitude' => ['required', 'numeric', 'between:-180,180'],
         ];
     }
 }

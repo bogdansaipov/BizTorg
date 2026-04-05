@@ -6,98 +6,100 @@ use App\Http\Controllers\Api\CategoryController;
 use App\Http\Controllers\Api\ConversationsController;
 use App\Http\Controllers\Api\MessagesController;
 use App\Http\Controllers\Api\ProductController;
-use App\Http\Controllers\Api\RegionsController;
-use App\Http\Controllers\ShopRatingController;
 use App\Http\Controllers\Api\ProfileController;
+use App\Http\Controllers\Api\RegionsController;
 use App\Http\Controllers\NotificationsController;
 use App\Http\Controllers\ShopProfileController;
+use App\Http\Controllers\ShopRatingController;
 use App\Http\Controllers\ShopSubscriptionController;
 use Illuminate\Support\Facades\Route;
 
-Route::get('/v1/home', [CategoryController::class, 'homePage']);
+/*
+|--------------------------------------------------------------------------
+| API Routes — all prefixed with /v1
+|--------------------------------------------------------------------------
+*/
 
-Route::get('/v1/categories', [CategoryController::class, 'fetchCategories']);
+Route::prefix('v1')->group(function () {
 
-Route::get('/v1/{categoryId}/subcategories', [CategoryController::class, 'fetchSubcategories']);
+    // ── Authentication ───────────────────────────────────────────────────────
+    Route::prefix('auth')->group(function () {
+        Route::post('register',               [CustomLoginController::class,    'register']);
+        Route::post('login',                  [CustomLoginController::class,    'login']);
+        Route::post('google',                 [ApiSocialAuthController::class,  'googleSignIn']);
+        Route::post('facebook',               [ApiSocialAuthController::class,  'facebookSignIn']);
+        Route::post('send-verification-code', [CustomLoginController::class,    'sendVerificationCode']);
+        Route::post('verify-and-register',    [CustomLoginController::class,    'verifyAndRegister']);
+    });
 
-Route::get('/v1/{subcategoryId}/products', [ProductController::class, 'getProducts']);
+    // ── Users ────────────────────────────────────────────────────────────────
+    Route::get('user/{id}',           [CustomLoginController::class, 'show']);
+    Route::get('user/{id}/fcm-token', [CustomLoginController::class, 'getFcmToken']);
+    Route::post('store-fcm-token',    [CustomLoginController::class, 'storeFcmToken']);
+    Route::post('clear-fcm-token',    [CustomLoginController::class, 'clearFcmToken']);
 
-Route::get('v1/{subcategoryId}/attributes', [ProductController::class, 'getAttributes']);
-Route::post('/v1/auth/google/', [ApiSocialAuthController::class, 'googleSignIn']);
-Route::post('/v1/auth/facebook/', [ApiSocialAuthController::class, 'facebookSignIn']);
-Route::post('v1/auth/register/', [CustomLoginController::class, 'register']);
-Route::post('v1/auth/login/', [CustomLoginController::class, 'login']);
+    // ── Profiles ─────────────────────────────────────────────────────────────
+    Route::get('profile/{id}',    [ProfileController::class, 'getUserDataJson']);
+    Route::post('profile/update', [ProfileController::class, 'updateProfile']);
 
-Route::get('/v1/regions', [RegionsController::class, 'fetchRegions']);
-Route::get('/v1/{parentRegionId}/child_regions', [RegionsController::class, 'fetchChildRegions']);
+    // ── Regions ──────────────────────────────────────────────────────────────
+    Route::get('regions',                          [RegionsController::class, 'fetchRegions']);
+    Route::get('{parentRegionId}/child_regions',   [RegionsController::class, 'fetchChildRegions']);
 
+    // ── Categories & Home ────────────────────────────────────────────────────
+    Route::get('home',                               [CategoryController::class, 'homePage']);
+    Route::get('categories',                         [CategoryController::class, 'fetchCategories']);
+    Route::get('{categoryId}/subcategories',         [CategoryController::class, 'fetchSubcategories']);
+    Route::get('find-category/subcategory/{id}',     [CategoryController::class, 'getCategory']);
+    Route::get('search',                             [CategoryController::class, 'searchProducts']);
+    Route::get('search-recommendations',             [CategoryController::class, 'searchRecommendations']);
 
-Route::get('/v1/filter-products/', [ProductController::class, 'filterProducts']);
+    // ── Products (public) ────────────────────────────────────────────────────
+    Route::get('{subcategoryId}/products',           [ProductController::class, 'getProducts']);
+    Route::get('{subcategoryId}/attributes',         [ProductController::class, 'getAttributes']);
+    Route::get('category/{categoryId}/products',     [ProductController::class, 'getProductsByCategory']);
+    Route::get('filter-products',                    [ProductController::class, 'filterProducts']);
+    Route::get('product/{productId}',                [ProductController::class, 'getProduct']);
+    Route::get('product/slug/{productSlug}',         [ProductController::class, 'getProductBySlug']);
+    Route::get('fetch/product/{id}',                 [ProductController::class, 'fetchSingleProduct']);
+    Route::post('product/create',                    [ProductController::class, 'createProduct']);
 
-Route::get('/v1/profile/{id}', [ProfileController::class, 'getUserDataJson']);
-Route::post('/v1/profile/update', [ProfileController::class, 'updateProfile']);
+    // ── Products (authenticated) ─────────────────────────────────────────────
+    Route::middleware('auth:sanctum')->group(function () {
+        Route::post('product/update/{id}',           [ProductController::class, 'updateProduct']);
+        Route::delete('products/delete/{productId}', [ProductController::class, 'removeProduct']);
+        Route::delete('product/image/{id}',          [ProductController::class, 'deleteImage']);
+        Route::get('user/{uuid}/products',            [ProductController::class, 'getUserProducts']);
+        Route::get('favorites',                       [ProductController::class, 'getFavorite']);
+        Route::post('favorite/toggle',               [ProductController::class, 'toggleFavorites']);
+        Route::get('user/favorites/{uuid}',           [ProductController::class, 'getFavoritesOfUser']);
+    });
 
-Route::post('/v1/product/create', [ProductController::class, 'createProduct']);
+    // ── Messaging ────────────────────────────────────────────────────────────
+    Route::middleware('auth:sanctum')->group(function () {
+        Route::post('send/message',                  [MessagesController::class,      'sendMessage']);
+        Route::get('getMessages/{receiver_id}',      [MessagesController::class,      'getMessages']);
+        Route::post('upload/chat-image',             [MessagesController::class,      'uploadChatImage']);
+        Route::get('user/get/chat/conversations',    [ConversationsController::class, 'getChats']);
+    });
 
-Route::get('/v1/product/{productId}', [ProductController::class, 'getProduct']);
-Route::get('/v1/product/slug/{productSlug}', [ProductController::class, 'getProductBySlug']);
+    // ── Notifications ────────────────────────────────────────────────────────
+    Route::middleware('auth:sanctum')->group(function () {
+        Route::get('notifications',                  [NotificationsController::class, 'index']);
+        Route::post('notifications/mark-all-seen',   [NotificationsController::class, 'markAsSeen']);
+        Route::post('notifications/mark-seen-for-chat', [NotificationsController::class, 'markSeenForChat']);
+    });
 
-Route::get('/v1/favorites/', [ProductController::class, 'getFavorite'])->middleware('auth:sanctum');
-Route::post('/v1/favorite/toggle/', [ProductController::class, 'toggleFavorites'])->middleware('auth:sanctum');
-Route::post('v1/send/message/', [MessagesController::class, 'sendMessage'])->middleware('auth:sanctum');
+    // ── Shops ────────────────────────────────────────────────────────────────
+    Route::get('shops/{userId}',                     [ShopProfileController::class, 'getUserProducts']);
 
-Route::get('v1/getMessages/{receiver_id}', [MessagesController::class, 'getMessages'])->middleware('auth:sanctum');
-
-Route::post('v1/store-fcm-token', [CustomLoginController::class, 'storeFcmToken']);
-Route::post('v1/clear-fcm-token', [CustomLoginController::class, 'clearFcmToken']);
-
-Route::get('v1/user/{id}', [CustomLoginController::class, 'show']);
-Route::get('v1/user/{id}/fcm-token', [CustomLoginController::class, 'getFcmToken']);
-
-Route::get('/v1/user/{uuid}/products', [ProductController::class, 'getUserProducts'])->middleware('auth:sanctum');
-Route::delete('/v1/products/delete/{productId}', [ProductController::class, 'removeProduct'])->middleware('auth:sanctum');
-Route::get('/v1/fetch/product/{id}', [ProductController::class, 'fetchSingleProduct']);
-
-Route::post('/v1/product/update/{id}', [ProductController::class, 'updateProduct'])->middleware('auth:sanctum');
-
-Route::delete('/v1/product/image/{id}', [ProductController::class, 'deleteImage'])->middleware('auth:sanctum');
-
-Route::get('/v1/user/favorites/{uuid}', [ProductController::class, 'getFavoritesOfUser'])->middleware('auth:sanctum');
-Route::get('/v1/user/get/chat/conversations', [ConversationsController::class, 'getChats'])->middleware('auth:sanctum');
-
-Route::get('/v1/search-recommendations', [CategoryController::class, 'searchRecommendations']);
-
-Route::get('/v1/search', [CategoryController::class, 'searchProducts']);
-
-Route::get('v1/category/{categoryId}/products', [ProductController::class, 'getProductsByCategory']);
-
-Route::get('/v1/find-category/subcategory/{id}', [CategoryController::class, 'getCategory']);
-
-Route::get('/v1/notifications', [NotificationsController::class, 'index'])->middleware('auth:sanctum');
-
-Route::post('/v1/notifications/mark-all-seen', [NotificationsController::class, 'markAsSeen'])->middleware('auth:sanctum');
-
-Route::post('/v1/notifications/mark-seen-for-chat', [NotificationsController::class, 'markSeenForChat'])->middleware('auth:sanctum');
-
-Route::post('/v1/auth/send-verification-code', [CustomLoginController::class, 'sendVerificationCode']);
-
-Route::post('/v1/auth/verify-and-register', [CustomLoginController::class, 'verifyAndRegister']);
-
-Route::post('/v1/shop-profiles/', [ShopProfileController::class, 'store'])->middleware('auth:sanctum');
-
-Route::post('/v1/shop/update', [ShopProfileController::class, 'updateShopData'])->middleware('auth:sanctum');
-
-Route::post('/v1/{shopId}/upload-profile-images/', [ShopProfileController::class, 'updateImages'])->middleware('auth:sanctum');
-
-Route::get('/v1/{shopId}/getShop', [ShopProfileController::class, 'getShopProfile'])->middleware('auth:sanctum');
-
-Route::post('/v1/subscribe/{shopId}', [ShopSubscriptionController::class, 'subscribe'])->middleware('auth:sanctum');
-Route::post('/v1/unsubscribe/{shopId}', [ShopSubscriptionController::class, 'unsubscribe'])->middleware('auth:sanctum');
-
-Route::get('/v1/shops/{userId}', [ShopProfileController::class, 'getUserProducts']);
-
-
-
-Route::post('/v1/shop/rate', [ShopRatingController::class, 'rateShop'])->middleware('auth:sanctum');
-
-Route::post('/v1/upload/chat-image/', [MessagesController::class, 'uploadChatImage'])->middleware('auth:sanctum');
+    Route::middleware('auth:sanctum')->group(function () {
+        Route::post('shop-profiles',                 [ShopProfileController::class,      'store']);
+        Route::post('shop/update',                   [ShopProfileController::class,      'updateShopData']);
+        Route::post('{shopId}/upload-profile-images',[ShopProfileController::class,      'updateImages']);
+        Route::get('{shopId}/getShop',               [ShopProfileController::class,      'getShopProfile']);
+        Route::post('subscribe/{shopId}',            [ShopSubscriptionController::class, 'subscribe']);
+        Route::post('unsubscribe/{shopId}',          [ShopSubscriptionController::class, 'unsubscribe']);
+        Route::post('shop/rate',                     [ShopRatingController::class,       'rateShop']);
+    });
+});
