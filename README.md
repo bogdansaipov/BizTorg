@@ -14,9 +14,10 @@ BizTorg is a multi-vendor product marketplace targeting Russian-speaking audienc
 - One-to-one messaging with image support
 - Push notifications via Firebase Cloud Messaging (FCM)
 - Automatic social media posting (Telegram, Facebook, Instagram) on product creation
-- Full-text search powered by PostgreSQL tsvector (Russian language)
+- Full-text + trigram search powered by PostgreSQL tsvector + pg_trgm (Russian language)
 - Social OAuth login (Google, Facebook, Telegram)
 - Admin panel via TCG Voyager
+- REST API with full OpenAPI 3.0 (Swagger UI) documentation
 
 ---
 
@@ -25,21 +26,37 @@ BizTorg is a multi-vendor product marketplace targeting Russian-speaking audienc
 | Layer | Technology |
 |---|---|
 | Backend | Laravel 11, PHP 8.2+ |
-| Database | PostgreSQL (primary), SQLite (fallback) |
+| Database | PostgreSQL 16 |
 | ORM | Eloquent |
-| API | REST (web + `/api/v1`) |
+| API | REST (`/api/v1`) with OpenAPI 3.0 |
+| API Docs | darkaonline/l5-swagger (Swagger UI) |
 | Authentication | Laravel Sanctum (API), Laravel Breeze (web) |
 | Social OAuth | Laravel Socialite (Google, Facebook, Telegram) |
 | Real-time | Laravel Reverb (WebSocket), Laravel Echo, Pusher-js |
-| Search | Laravel Scout + PostgreSQL tsvector |
+| Search | PostgreSQL tsvector + pg_trgm trigram search |
 | Push Notifications | Firebase (kreait/laravel-firebase) |
 | Admin Panel | TCG Voyager |
 | Frontend | Blade, Vite 5, Tailwind CSS 3, Alpine.js 3 |
-| HTTP Client (frontend) | Axios |
 | Queue / Cache / Session | Database driver |
-| Testing | Pest PHP |
-| Code Style | Laravel Pint |
-| Dev Tooling | Laravel Sail, Laravel Pail, Concurrently |
+| Containerisation | Docker (PHP-FPM, Nginx, PostgreSQL, queue worker, Reverb) |
+
+---
+
+## Architecture
+
+The codebase follows a strict **Controller → Service → Repository** layered architecture:
+
+- **Controllers** — thin HTTP handlers: validate input, call one service method, return response
+- **Services** — all business logic (transactions, social posting, FCM dispatch, data assembly)
+- **Repositories** — all database queries, implementing typed interfaces bound via DI in `AppServiceProvider`
+
+```
+HTTP Request
+    └─► Controller
+            └─► Service
+                    └─► Repository (via Interface)
+                            └─► Eloquent / DB
+```
 
 ---
 
@@ -50,43 +67,167 @@ BizTorg/
 ├── app/
 │   ├── Http/
 │   │   ├── Controllers/
-│   │   │   ├── Api/                  # API v1 controllers
-│   │   │   │   ├── Auth/             # API auth (login, register, social)
+│   │   │   ├── Api/                          # API v1 controllers (thin — delegate to Services)
+│   │   │   │   ├── Auth/
+│   │   │   │   │   ├── ApiSocialAuthController.php
+│   │   │   │   │   └── CustomLoginController.php
 │   │   │   │   ├── CategoryController.php
-│   │   │   │   ├── ProductController.php
 │   │   │   │   ├── ConversationsController.php
 │   │   │   │   ├── MessagesController.php
+│   │   │   │   ├── ProductController.php
 │   │   │   │   ├── ProfileController.php
-│   │   │   │   ├── RegionsController.php
-│   │   │   │   └── ...
-│   │   │   ├── Auth/                 # Web auth controllers
+│   │   │   │   └── RegionsController.php
+│   │   │   ├── Auth/                         # Web auth (Breeze)
+│   │   │   ├── AttributeAttributeValueController.php
 │   │   │   ├── CategoryController.php
+│   │   │   ├── Controller.php                # Base (AuthorizesRequests trait)
+│   │   │   ├── IndexController.php
+│   │   │   ├── NotificationsController.php
 │   │   │   ├── ProductController.php
 │   │   │   ├── ProfileController.php
 │   │   │   ├── ShopProfileController.php
 │   │   │   ├── ShopRatingController.php
 │   │   │   ├── ShopSubscriptionController.php
-│   │   │   ├── NotificationsController.php
-│   │   │   ├── SitemapController.php
-│   │   │   └── IndexController.php
-│   │   └── Middleware/
-│   ├── Models/                       # Eloquent models
-│   └── Services/                     # Business logic services
-│       ├── TelegramService.php       # Telegram Bot API integration
-│       ├── FacebookService.php       # Facebook Graph API integration
-│       ├── InstagramService.php      # Instagram Graph API integration
-│       └── CurrencyService.php       # Currency rate management
+│   │   │   └── SitemapController.php
+│   │   └── Requests/
+│   │       ├── Api/                          # API Form Requests
+│   │       │   ├── ApiLoginRequest.php
+│   │       │   ├── ApiRegisterRequest.php
+│   │       │   ├── CreateProductRequest.php
+│   │       │   └── SendMessageRequest.php
+│   │       ├── StoreProductRequest.php
+│   │       ├── StoreShopProfileRequest.php
+│   │       ├── UpdateProductRequest.php
+│   │       ├── UpdateShopImagesRequest.php
+│   │       └── UpdateShopProfileRequest.php
+│   ├── Services/                             # Business logic layer
+│   │   ├── CategoryService.php
+│   │   ├── ConversationService.php
+│   │   ├── CurrencyService.php
+│   │   ├── FacebookService.php
+│   │   ├── IndexService.php
+│   │   ├── InstagramService.php
+│   │   ├── MessageService.php
+│   │   ├── NotificationService.php
+│   │   ├── ProductService.php
+│   │   ├── ProfileService.php
+│   │   ├── SearchService.php                 # tsvector + pg_trgm hybrid search
+│   │   ├── ShopService.php
+│   │   ├── SitemapService.php
+│   │   └── TelegramService.php
+│   ├── Repositories/                         # Database query layer
+│   │   ├── Contracts/                        # Interfaces (bound in AppServiceProvider)
+│   │   │   ├── CategoryRepositoryInterface.php
+│   │   │   ├── ConversationRepositoryInterface.php
+│   │   │   ├── MessageRepositoryInterface.php
+│   │   │   ├── NotificationRepositoryInterface.php
+│   │   │   ├── ProductRepositoryInterface.php
+│   │   │   ├── ProfileRepositoryInterface.php
+│   │   │   ├── RegionRepositoryInterface.php
+│   │   │   ├── ShopProfileRepositoryInterface.php
+│   │   │   └── UserRepositoryInterface.php
+│   │   ├── CategoryRepository.php
+│   │   ├── ConversationRepository.php
+│   │   ├── MessageRepository.php
+│   │   ├── NotificationRepository.php
+│   │   ├── ProductRepository.php
+│   │   ├── ProfileRepository.php
+│   │   ├── RegionRepository.php
+│   │   ├── ShopProfileRepository.php
+│   │   └── UserRepository.php
+│   ├── Models/                               # Eloquent models
+│   │   ├── Attribute.php
+│   │   ├── AttributeValue.php
+│   │   ├── Category.php
+│   │   ├── Conversation.php
+│   │   ├── Favorite.php
+│   │   ├── Message.php
+│   │   ├── Notification.php
+│   │   ├── Product.php
+│   │   ├── ProductImage.php
+│   │   ├── Profile.php
+│   │   ├── Region.php
+│   │   ├── ShopProfile.php
+│   │   ├── ShopRating.php
+│   │   ├── ShopSubscription.php
+│   │   ├── Subcategory.php
+│   │   └── User.php
+│   ├── Jobs/
+│   │   ├── PostToSocialMediaJob.php
+│   │   ├── RemoveFromSocialMediaJob.php
+│   │   ├── SendFcmNotification.php
+│   │   └── UpdateSocialMediaPostsJob.php
+│   ├── Policies/
+│   │   └── ShopPolicy.php
+│   ├── Observers/
+│   │   ├── ShopRatingObserver.php
+│   │   └── ShopSubscriptionObserver.php
+│   ├── OpenApi/                              # OpenAPI 3.0 annotations
+│   │   ├── ApiInfo.php                       # Global info, server, security scheme, tags
+│   │   └── Schemas/                          # Reusable $ref component schemas
+│   │       ├── AuthResponseSchema.php
+│   │       ├── CategorySchema.php
+│   │       ├── CreateProductRequestSchema.php
+│   │       ├── ErrorResponseSchema.php
+│   │       ├── FcmTokenRequestSchema.php
+│   │       ├── LoginRequestSchema.php
+│   │       ├── MessageSchema.php
+│   │       ├── NotificationSchema.php
+│   │       ├── PaginationSchema.php
+│   │       ├── ProductDetailSchema.php
+│   │       ├── ProductImageSchema.php
+│   │       ├── ProductListItemSchema.php
+│   │       ├── ProfileSchema.php
+│   │       ├── RateShopRequestSchema.php
+│   │       ├── RegionSchema.php
+│   │       ├── RegisterRequestSchema.php
+│   │       ├── SendMessageRequestSchema.php
+│   │       ├── SendVerificationRequestSchema.php
+│   │       ├── ShopProfileSchema.php
+│   │       ├── SocialAuthRequestSchema.php
+│   │       ├── StoreShopRequestSchema.php
+│   │       ├── SubcategorySchema.php
+│   │       ├── UpdateProductRequestSchema.php
+│   │       ├── UpdateProfileRequestSchema.php
+│   │       ├── UserSchema.php
+│   │       └── ValidationErrorSchema.php
+│   └── Providers/
+│       └── AppServiceProvider.php            # Repository interface → implementation bindings
 ├── database/
-│   ├── migrations/                   # 52 migration files
-│   └── seeders/                      # Voyager + permissions seeders
+│   ├── migrations/
+│   └── seeders/
 ├── routes/
-│   ├── web.php                       # Web routes
-│   ├── api.php                       # API v1 routes
-│   ├── auth.php                      # Authentication routes
+│   ├── api.php                               # All /api/v1 routes
+│   ├── web.php
+│   ├── auth.php
 │   └── console.php
-├── config/                           # Laravel + custom config files
-├── resources/views/                  # Blade templates
-└── tests/                            # Pest PHP tests
+├── docker/
+│   ├── entrypoint.sh                         # Runs migrations + role seeder on startup
+│   ├── nginx/default.conf
+│   └── php/php.ini
+├── config/
+│   └── l5-swagger.php                        # Swagger UI configuration
+├── Dockerfile                                # Multi-stage: assets → vendor → app → nginx
+├── docker-compose.yml
+└── .dockerignore
+```
+
+---
+
+## API Documentation (Swagger UI)
+
+When the app is running, the full interactive API reference is available at:
+
+```
+http://localhost/api/documentation
+```
+
+All endpoints are documented with request schemas, response schemas, authentication requirements, and example values. Authenticated endpoints require a **Bearer token** obtained from `/api/v1/auth/login` or `/api/v1/auth/register`.
+
+To regenerate the docs after annotation changes:
+
+```bash
+docker compose exec app php artisan l5-swagger:generate
 ```
 
 ---
@@ -101,7 +242,7 @@ BizTorg/
 | name | string (nullable) | Display name |
 | email | string (nullable) | Email address |
 | password | string | Hashed password |
-| role_id | bigint (nullable) | Voyager role |
+| role_id | bigint (FK) | References `roles.id` (2 = user, 1 = admin) |
 | google_id | string (nullable) | Google OAuth ID |
 | facebook_id | string (nullable) | Facebook OAuth ID |
 | telegram_id | string (nullable) | Telegram OAuth ID |
@@ -109,7 +250,6 @@ BizTorg/
 | fcm_token | string (nullable) | Firebase push notification token |
 | isShop | boolean | Whether the user has a shop |
 | email_verified_at | timestamp | Email verification timestamp |
-| remember_token | string | Session remember token |
 | created_at / updated_at | timestamp | Timestamps |
 
 ---
@@ -166,7 +306,7 @@ BizTorg/
 | slug | string | URL-friendly identifier |
 | description | text | Product description |
 | price | decimal | Product price |
-| currency | string | Price currency |
+| currency | string | Price currency (`сум` / `доллар`) |
 | type | enum | `sale` or `purchase` |
 | latitude | decimal (nullable) | GPS latitude |
 | longitude | decimal (nullable) | GPS longitude |
@@ -177,7 +317,7 @@ BizTorg/
 | insta_post_id | string (nullable) | ID of the associated Instagram post |
 | created_at / updated_at | timestamp | Timestamps |
 
-**Full-text search:** Additional `tsvector` columns are created for `name`, `description`, and `slug` (PostgreSQL, Russian language).
+**Full-text search:** `tsvector` columns on `name`, `description`, `slug` (PostgreSQL, Russian language). Trigram similarity via `pg_trgm` extension for fuzzy matching.
 
 ---
 
@@ -187,56 +327,14 @@ BizTorg/
 |--------|------|-------------|
 | id | bigint | Primary key |
 | product_id | bigint (FK) | References `products.id` |
-| image_url | string | URL of the image |
+| image_url | string | Storage path of the image |
 | created_at / updated_at | timestamp | Timestamps |
 
 ---
 
-### `attributes`
+### `attributes` / `attribute_values`
 
-| Column | Type | Description |
-|--------|------|-------------|
-| id | bigint | Primary key |
-| name | string | Attribute name (e.g., "Color") |
-| slug | string | URL-friendly identifier |
-| created_at / updated_at | timestamp | Timestamps |
-
----
-
-### `attribute_values`
-
-| Column | Type | Description |
-|--------|------|-------------|
-| id | bigint | Primary key |
-| value | string | Value text (e.g., "Red") |
-| created_at / updated_at | timestamp | Timestamps |
-
----
-
-### `attribute_subcategories` (pivot)
-
-| Column | Type | Description |
-|--------|------|-------------|
-| attribute_id | bigint (FK) | References `attributes.id` |
-| subcategory_id | bigint (FK) | References `subcategories.id` |
-
----
-
-### `attribute_attribute_values` (pivot)
-
-| Column | Type | Description |
-|--------|------|-------------|
-| attribute_id | bigint (FK) | References `attributes.id` |
-| attribute_value_id | bigint (FK) | References `attribute_values.id` |
-
----
-
-### `product_attribute_values` (pivot)
-
-| Column | Type | Description |
-|--------|------|-------------|
-| product_id | bigint (FK) | References `products.id` |
-| attribute_value_id | bigint (FK) | References `attribute_values.id` |
+Flexible product attribute system. Attributes (e.g. "Color") belong to subcategories. Attribute values (e.g. "Red") belong to attributes. Products link to attribute values via the `product_attribute_values` pivot.
 
 ---
 
@@ -246,48 +344,18 @@ BizTorg/
 |--------|------|-------------|
 | id | bigint | Primary key |
 | name | string | Region name |
+| slug | string | URL-friendly identifier |
 | parent_id | bigint (nullable, FK) | Self-referential parent region |
-| latitude | decimal (nullable) | GPS latitude |
-| longitude | decimal (nullable) | GPS longitude |
+| latitude / longitude | decimal (nullable) | GPS coordinates |
 | created_at / updated_at | timestamp | Timestamps |
 
-Hierarchical structure: top-level regions have `parent_id = null`; child regions reference their parent.
+Hierarchical: top-level regions have `parent_id = null`. Child regions reference their parent.
 
 ---
 
-### `favorites` (pivot)
+### `conversations` / `messages`
 
-| Column | Type | Description |
-|--------|------|-------------|
-| id | bigint | Primary key |
-| user_id | bigint (FK) | References `users.id` |
-| product_id | bigint (FK) | References `products.id` |
-| created_at / updated_at | timestamp | Timestamps |
-
----
-
-### `conversations`
-
-| Column | Type | Description |
-|--------|------|-------------|
-| id | bigint | Primary key |
-| user_one_id | bigint (FK) | First participant (`users.id`) |
-| user_two_id | bigint (FK) | Second participant (`users.id`) |
-| created_at / updated_at | timestamp | Timestamps |
-
----
-
-### `messages`
-
-| Column | Type | Description |
-|--------|------|-------------|
-| id | bigint | Primary key |
-| conversation_id | bigint (FK) | References `conversations.id` |
-| sender_id | bigint (FK) | References `users.id` |
-| message | text (nullable) | Message text |
-| image_url | string (nullable) | Attached image URL |
-| read_at | timestamp (nullable) | When the message was read |
-| created_at / updated_at | timestamp | Timestamps |
+One-to-one chat. A `conversation` links two users; `messages` belong to a conversation with a `sender_id`. Supports text and image attachments.
 
 ---
 
@@ -295,98 +363,25 @@ Hierarchical structure: top-level regions have `parent_id = null`; child regions
 
 | Column | Type | Description |
 |--------|------|-------------|
-| id | bigint | Primary key |
-| receiver_id | bigint (FK) | References `users.id` |
-| sender_id | bigint (nullable, FK) | References `users.id` |
+| receiver_id | bigint (FK) | Target user |
+| sender_id | bigint (nullable, FK) | Originating user |
 | type | string | Notification type |
 | content | text | Notification content |
-| hasBeenSeen | boolean | Whether user has seen it |
-| is_global | boolean | Global broadcast flag |
-| reference_id | bigint (nullable) | Reference to related entity |
-| priority | enum | `low`, `medium`, or `high` |
-| expires_at | timestamp (nullable) | Expiry time |
+| hasBeenSeen | boolean | Read status |
+| priority | enum | `low`, `medium`, `high` |
 | metadata | json (nullable) | Additional structured data |
-| date | date (nullable) | Display date |
-| created_at / updated_at | timestamp | Timestamps |
 
 ---
 
 ### `shop_profiles`
 
-| Column | Type | Description |
-|--------|------|-------------|
-| id | bigint | Primary key |
-| user_id | bigint (FK) | References `users.id` |
-| shop_name | string | Shop display name |
-| description | text (nullable) | Shop description |
-| tax_id_number | string (nullable) | Tax / business ID |
-| contact_name | string (nullable) | Contact person name |
-| address | string (nullable) | Physical address |
-| phone | string (nullable) | Contact phone |
-| banner_url | string (nullable) | Banner image URL |
-| profile_url | string (nullable) | Profile image URL |
-| is_online | boolean | Online status |
-| facebook_link | string (nullable) | Facebook page URL |
-| telegram_link | string (nullable) | Telegram link |
-| instagram_link | string (nullable) | Instagram link |
-| website | string (nullable) | Website URL |
-| verified | boolean | Verification status |
-| rating | float | Average rating |
-| rating_sum | integer | Sum of all ratings |
-| rating_count | integer | Number of ratings |
-| subscribers | integer | Subscriber count |
-| total_reviews | integer | Total review count |
-| views | integer | Profile view count |
-| latitude | decimal (nullable) | GPS latitude |
-| longitude | decimal (nullable) | GPS longitude |
-| created_at / updated_at | timestamp | Timestamps |
+Full shop profile including branding (banner/profile images), contact info, social links, rating aggregates, and subscriber count.
 
 ---
 
-### `shop_subscriptions`
+### `shop_subscriptions` / `shop_ratings`
 
-| Column | Type | Description |
-|--------|------|-------------|
-| id | bigint | Primary key |
-| user_id | bigint (FK) | References `users.id` |
-| shop_id | bigint (FK) | References `shop_profiles.id` |
-| created_at / updated_at | timestamp | Timestamps |
-
-Unique constraint on `(user_id, shop_id)`.
-
----
-
-### `shop_ratings`
-
-| Column | Type | Description |
-|--------|------|-------------|
-| id | bigint | Primary key |
-| user_id | bigint (FK) | References `users.id` |
-| shop_profile_id | bigint (FK) | References `shop_profiles.id` |
-| rating | tinyint | Rating value (1–5) |
-| created_at / updated_at | timestamp | Timestamps |
-
-Unique constraint on `(user_id, shop_profile_id)`. Check constraint: `rating >= 1 AND rating <= 5`.
-
----
-
-### `temp_credentials`
-
-| Column | Type | Description |
-|--------|------|-------------|
-| id | bigint | Primary key |
-| email | string | Temporary email |
-| password | string | Temporary password |
-| expires_at | timestamp | Expiry time |
-| created_at / updated_at | timestamp | Timestamps |
-
-Used during the email verification registration flow.
-
----
-
-### `personal_access_tokens`
-
-Standard Laravel Sanctum table for API token authentication.
+Pivot tables for shop subscriptions (unique per user+shop) and ratings (1–5, unique per user+shop, with check constraint).
 
 ---
 
@@ -400,10 +395,8 @@ Standard Laravel Sanctum table for API token authentication.
 | POST | `/api/v1/auth/login` | — | Login with email/password |
 | POST | `/api/v1/auth/google` | — | Sign in with Google OAuth token |
 | POST | `/api/v1/auth/facebook` | — | Sign in with Facebook OAuth token |
-| POST | `/api/v1/auth/send-verification-code` | — | Send SMS verification code |
+| POST | `/api/v1/auth/send-verification-code` | — | Send email verification code |
 | POST | `/api/v1/auth/verify-and-register` | — | Verify code and complete registration |
-
----
 
 ### Users & Profiles
 
@@ -411,54 +404,41 @@ Standard Laravel Sanctum table for API token authentication.
 |--------|-----|------|-------------|
 | GET | `/api/v1/user/{id}` | — | Get user details |
 | GET | `/api/v1/user/{id}/fcm-token` | — | Get user's FCM token |
-| POST | `/api/v1/store-fcm-token` | Sanctum | Store FCM push token |
-| POST | `/api/v1/clear-fcm-token` | Sanctum | Clear FCM push token |
+| POST | `/api/v1/store-fcm-token` | — | Store FCM push token |
+| POST | `/api/v1/clear-fcm-token` | — | Clear FCM push token |
 | GET | `/api/v1/profile/{id}` | — | Get user profile as JSON |
 | POST | `/api/v1/profile/update` | Sanctum | Update user profile |
-
----
 
 ### Categories & Home
 
 | Method | URL | Auth | Description |
 |--------|-----|------|-------------|
-| GET | `/api/v1/home` | — | Home page data with categories |
+| GET | `/api/v1/home` | — | Home feed: categories + paginated products |
 | GET | `/api/v1/categories` | — | List all categories |
 | GET | `/api/v1/{categoryId}/subcategories` | — | Subcategories for a category |
 | GET | `/api/v1/find-category/subcategory/{id}` | — | Find parent category by subcategory |
-
----
+| GET | `/api/v1/search` | — | Full-text + trigram product search |
+| GET | `/api/v1/search-recommendations` | — | Search suggestions (subcategory names) |
 
 ### Products
 
 | Method | URL | Auth | Description |
 |--------|-----|------|-------------|
 | GET | `/api/v1/{subcategoryId}/products` | — | Products in a subcategory |
+| GET | `/api/v1/{subcategoryId}/attributes` | — | Attributes for a subcategory |
 | GET | `/api/v1/category/{categoryId}/products` | — | Products in a category |
-| GET | `/api/v1/product/{productId}` | — | Get product by ID |
-| GET | `/api/v1/product/slug/{productSlug}` | — | Get product by slug |
-| POST | `/api/v1/product/create` | Sanctum | Create a new product |
-| POST | `/api/v1/product/update/{id}` | Sanctum | Update an existing product |
+| GET | `/api/v1/filter-products` | — | Filter products (price, type, region, attributes, search) |
+| GET | `/api/v1/product/{productId}` | — | Get product detail by ID |
+| GET | `/api/v1/product/slug/{productSlug}` | — | Get product detail by slug |
+| GET | `/api/v1/fetch/product/{id}` | — | Get product data for edit form |
+| POST | `/api/v1/product/create` | — | Create a new product listing |
+| POST | `/api/v1/product/update/{id}` | Sanctum | Update a product listing |
 | DELETE | `/api/v1/products/delete/{productId}` | Sanctum | Delete a product |
 | DELETE | `/api/v1/product/image/{id}` | Sanctum | Delete a product image |
-| GET | `/api/v1/fetch/product/{id}` | Sanctum | Fetch product data for editing |
-| GET | `/api/v1/user/{uuid}/products` | Sanctum | Get products belonging to a user |
-| GET | `/api/v1/{subcategoryId}/attributes` | — | Attributes for a subcategory |
-| GET | `/api/v1/filter-products` | — | Filter products (price, type, region, attributes) |
-| GET | `/api/v1/search` | — | Full-text search |
-| GET | `/api/v1/search-recommendations` | — | Search suggestions |
-
----
-
-### Favorites
-
-| Method | URL | Auth | Description |
-|--------|-----|------|-------------|
-| GET | `/api/v1/favorites` | Sanctum | Get current user's favorites |
-| POST | `/api/v1/favorite/toggle` | Sanctum | Toggle a product favorite |
-| GET | `/api/v1/user/favorites/{uuid}` | Sanctum | Get favorites list for a user |
-
----
+| GET | `/api/v1/favorites` | Sanctum | Get current user's favourite IDs |
+| POST | `/api/v1/favorite/toggle` | Sanctum | Toggle a product favourite |
+| GET | `/api/v1/user/favorites/{uuid}` | Sanctum | Get full favourites list for a user |
+| GET | `/api/v1/user/{uuid}/products` | Sanctum | Get products created by a user |
 
 ### Messaging
 
@@ -466,48 +446,42 @@ Standard Laravel Sanctum table for API token authentication.
 |--------|-----|------|-------------|
 | POST | `/api/v1/send/message` | Sanctum | Send a message |
 | GET | `/api/v1/getMessages/{receiver_id}` | Sanctum | Get messages in a conversation |
-| GET | `/api/v1/user/get/chat/conversations` | Sanctum | Get all conversations for current user |
-| POST | `/api/v1/upload/chat-image` | Sanctum | Upload an image in chat |
-
----
+| GET | `/api/v1/user/get/chat/conversations` | Sanctum | Get all conversations |
+| POST | `/api/v1/upload/chat-image` | Sanctum | Upload a chat image |
 
 ### Notifications
 
 | Method | URL | Auth | Description |
 |--------|-----|------|-------------|
-| GET | `/api/v1/notifications` | Sanctum | Get user notifications |
+| GET | `/api/v1/notifications` | Sanctum | Get unseen notifications |
 | POST | `/api/v1/notifications/mark-all-seen` | Sanctum | Mark all notifications as seen |
 | POST | `/api/v1/notifications/mark-seen-for-chat` | Sanctum | Mark chat notifications as seen |
-
----
 
 ### Regions
 
 | Method | URL | Auth | Description |
 |--------|-----|------|-------------|
-| GET | `/api/v1/regions` | — | Get all regions |
+| GET | `/api/v1/regions` | — | Get all top-level regions |
 | GET | `/api/v1/{parentRegionId}/child_regions` | — | Get child regions |
-
----
 
 ### Shops
 
 | Method | URL | Auth | Description |
 |--------|-----|------|-------------|
+| GET | `/api/v1/shops/{userId}` | — | Get all products for a shop/user |
 | POST | `/api/v1/shop-profiles` | Sanctum | Create a shop profile |
 | POST | `/api/v1/shop/update` | Sanctum | Update shop information |
-| POST | `/api/v1/{shopId}/upload-profile-images` | Sanctum | Upload shop profile / banner image |
+| POST | `/api/v1/{shopId}/upload-profile-images` | Sanctum | Upload shop banner/profile image |
 | GET | `/api/v1/{shopId}/getShop` | Sanctum | Get shop profile details |
-| GET | `/api/v1/shops/{userId}` | — | Get shops belonging to a user |
 | POST | `/api/v1/subscribe/{shopId}` | Sanctum | Subscribe to a shop |
 | POST | `/api/v1/unsubscribe/{shopId}` | Sanctum | Unsubscribe from a shop |
-| POST | `/api/v1/shop/rate` | Sanctum | Submit a rating for a shop (1–5) |
+| POST | `/api/v1/shop/rate` | Sanctum | Rate a shop (1–5) |
 
 ---
 
 ## Environment Variables
 
-Copy `.env.example` to `.env` and fill in the required values.
+Copy `.env.docker` to `.env` for Docker setup, or `.env.example` for local setup.
 
 ### Application
 
@@ -515,174 +489,109 @@ Copy `.env.example` to `.env` and fill in the required values.
 |----------|-------------|
 | `APP_NAME` | Application name |
 | `APP_ENV` | Environment (`local`, `production`) |
-| `APP_KEY` | Laravel application key (generated by artisan) |
+| `APP_KEY` | Laravel application key |
 | `APP_DEBUG` | Debug mode (`true` / `false`) |
 | `APP_URL` | Base URL of the application |
+| `L5_SWAGGER_CONST_HOST` | Base URL used in Swagger UI server definition |
+| `L5_SWAGGER_GENERATE_ALWAYS` | Auto-regenerate docs on each request (`true` in dev) |
 
 ### Database
 
 | Variable | Description |
 |----------|-------------|
-| `DB_CONNECTION` | Database driver (`pgsql`) |
-| `DB_HOST` | Database host (`127.0.0.1`) |
-| `DB_PORT` | Database port (`5432`) |
-| `DB_DATABASE` | Database name (`biztorglara`) |
+| `DB_CONNECTION` | `pgsql` |
+| `DB_HOST` | Database host |
+| `DB_PORT` | `5432` |
+| `DB_DATABASE` | Database name |
 | `DB_USERNAME` | Database user |
 | `DB_PASSWORD` | Database password |
 
-### Session / Cache / Queue
+### Social OAuth
 
 | Variable | Description |
 |----------|-------------|
-| `SESSION_DRIVER` | Session driver (`database`) |
-| `CACHE_STORE` | Cache driver (`database`) |
-| `QUEUE_CONNECTION` | Queue driver (`database`) |
-
-### Social OAuth — Google
-
-| Variable | Description |
-|----------|-------------|
-| `GOOGLE_CLIENT_ID` | Google OAuth client ID |
-| `GOOGLE_CLIENT_SECRET` | Google OAuth client secret |
-| `GOOGLE_REDIRECT` | Google OAuth redirect URI |
-
-### Social OAuth — Facebook
-
-| Variable | Description |
-|----------|-------------|
-| `FACEBOOK_CLIENT_ID` | Facebook app ID |
-| `FACEBOOK_CLIENT_SECRET` | Facebook app secret |
-| `FACEBOOK_REDIRECT` | Facebook OAuth redirect URI |
-
-### Social OAuth / Bot — Telegram
-
-| Variable | Description |
-|----------|-------------|
+| `GOOGLE_CLIENT_ID / SECRET / REDIRECT` | Google OAuth credentials |
+| `FACEBOOK_CLIENT_ID / SECRET / REDIRECT` | Facebook OAuth credentials |
 | `TELEGRAM_TOKEN` | Telegram bot token |
-| `TELEGRAM_BOT_NAME` | Telegram bot username |
-| `CHAT_ID` | Telegram channel/chat ID for product announcements |
-| `BOT_TOKEN` | Telegram bot token (Needs verification — may duplicate `TELEGRAM_TOKEN`) |
+| `CHAT_ID` | Telegram channel ID for product announcements |
 
-### Firebase
+### Firebase / Push
 
 | Variable | Description |
 |----------|-------------|
-| `FIREBASE_*` | Firebase project credentials for FCM push notifications (see `config/firebase.php`) |
+| `FIREBASE_*` | Firebase project credentials for FCM (see `config/firebase.php`) |
 
-### Broadcasting (Real-time)
+### Broadcasting
 
 | Variable | Description |
 |----------|-------------|
-| `BROADCAST_CONNECTION` | Broadcasting driver (e.g., `reverb`) |
-| `REVERB_APP_ID` | Laravel Reverb app ID |
-| `REVERB_APP_KEY` | Laravel Reverb app key |
-| `REVERB_APP_SECRET` | Laravel Reverb app secret |
-| `REVERB_HOST` | Reverb server host |
-| `REVERB_PORT` | Reverb server port |
-
----
-
-## Installation & Setup
-
-### Requirements
-
-- PHP 8.2+
-- Composer
-- Node.js 18+ and npm
-- PostgreSQL 14+
-
-### Steps
-
-```bash
-# 1. Clone the repository
-git clone <repo-url>
-cd BizTorg
-
-# 2. Install PHP dependencies
-composer install
-
-# 3. Install Node dependencies
-npm install
-
-# 4. Copy environment file
-cp .env.example .env
-
-# 5. Generate application key
-php artisan key:generate
-
-# 6. Configure .env (database credentials, OAuth keys, Firebase, Telegram, etc.)
-
-# 7. Run database migrations
-php artisan migrate
-
-# 8. Seed the database (Voyager admin panel + roles + permissions)
-php artisan db:seed
-
-# 9. Build frontend assets
-npm run build
-
-# 10. Link storage directory
-php artisan storage:link
-
-# 11. Start the development server
-php artisan serve
-```
+| `BROADCAST_CONNECTION` | `reverb` |
+| `REVERB_APP_ID / KEY / SECRET / HOST / PORT` | Laravel Reverb WebSocket config |
 
 ---
 
 ## Docker Setup
 
-The repository includes a complete Docker stack:
+The repository includes a complete Docker Compose stack:
 
 | Service | Image | Purpose |
 |---------|-------|---------|
 | `postgres` | postgres:16-alpine | PostgreSQL database |
 | `app` | Dockerfile (`app` stage) | PHP-FPM application server |
-| `nginx` | Dockerfile (`nginx` stage) | HTTP server — serves static files and proxies PHP |
-| `queue` | same image as `app` | Background queue worker |
-| `reverb` | same image as `app` | Laravel Reverb WebSocket server |
+| `nginx` | Dockerfile (`nginx` stage) | HTTP server — serves static files, proxies PHP |
+| `queue` | same as `app` | Background queue worker (`queue:work`) |
+| `reverb` | same as `app` | Laravel Reverb WebSocket server |
 
-### First-time setup
+### Quick start
 
 ```bash
-# 1. Copy the Docker environment template
+# 1. Copy environment file
 cp .env.docker .env
 
-# 2. Generate an application key and paste the output into APP_KEY in .env
+# 2. Generate an application key — paste the output into APP_KEY in .env
 docker compose run --rm --no-deps --entrypoint php app artisan key:generate --show
 
-# 3. Build all images and start the stack
+# 3. Build images and start the stack
 docker compose up --build -d
 
-# 4. (Optional) Seed the database
-docker compose exec app php artisan db:seed
+# 4. Generate Swagger docs
+docker compose exec app php artisan l5-swagger:generate
 ```
 
-The application will be available at **http://localhost** (port 80).  
-The WebSocket server (Reverb) listens on **port 8080**.
+The app is available at **http://localhost** (port 80).  
+Swagger UI is at **http://localhost/api/documentation**.  
+Reverb WebSocket listens on **port 8080**.
 
-### Useful Docker commands
+> On first start, migrations and role seeding run automatically via `docker/entrypoint.sh`.
+
+### Useful commands
 
 ```bash
-# Start the full stack
+# Start the stack
 docker compose up -d
 
-# Rebuild images after code changes
+# Rebuild after code changes
 docker compose up --build -d
 
-# Follow application logs
-docker compose logs -f app
-
-# Run an Artisan command inside the container
+# Run an Artisan command
 docker compose exec app php artisan <command>
 
-# Open a shell in the app container
+# Regenerate Swagger docs
+docker compose exec app php artisan l5-swagger:generate
+
+# Regenerate autoloader (after adding new classes)
+docker compose exec app composer dump-autoload --optimize
+
+# Follow app logs
+docker compose logs -f app
+
+# Open a shell
 docker compose exec app sh
 
 # Stop all services
 docker compose down
 
-# Stop and remove all volumes (⚠ deletes database and uploads)
+# Stop and remove volumes (⚠ deletes database and uploads)
 docker compose down -v
 ```
 
@@ -690,61 +599,48 @@ docker compose down -v
 
 | Volume | Mounted at | Purpose |
 |--------|-----------|---------|
-| `postgres_data` | `/var/lib/postgresql/data` | Database files — persists between restarts |
-| `app_storage` | `/var/www/html/storage` | Uploaded files, logs, compiled views |
+| `biztorg_pg_data` | `/var/lib/postgresql/data` | Database files |
+| `app_storage` | `/var/www/html/storage` | Uploads, logs, compiled views |
 
 ### Ports
 
-| Port | Service | Overridable via |
-|------|---------|----------------|
-| 80 | Nginx (HTTP) | `APP_PORT` in `.env` |
+| Port | Service | Override via |
+|------|---------|--------------|
+| 80 | Nginx | `APP_PORT` in `.env` |
 | 5432 | PostgreSQL | `DB_FORWARD_PORT` in `.env` |
 | 8080 | Reverb WebSocket | `REVERB_PORT` in `.env` |
 
 ---
 
-## Scripts & Commands
+## Local Development Setup
 
-### Development
+### Requirements
+
+- PHP 8.2+, Composer
+- Node.js 20+, npm
+- PostgreSQL 14+
 
 ```bash
-# Start all dev processes at once (server + queue + logs + Vite)
-composer run dev
-
-# Or start each individually:
-php artisan serve            # HTTP server
-npm run dev                  # Vite dev server with HMR
-php artisan queue:listen     # Queue worker
-php artisan pail             # Real-time log viewer
-php artisan reverb:start     # WebSocket server
+git clone <repo-url> && cd BizTorg
+composer install
+npm install
+cp .env.example .env
+php artisan key:generate
+# configure .env (DB, OAuth, Firebase, Telegram...)
+php artisan migrate
+php artisan db:seed --class=RolesTableSeeder
+php artisan storage:link
+npm run build
+php artisan serve
 ```
 
-### Database
+### Development scripts
 
 ```bash
-php artisan migrate               # Run pending migrations
-php artisan migrate:fresh         # Drop all tables and re-migrate
-php artisan db:seed               # Seed the database
-php artisan migrate:fresh --seed  # Fresh migration + seed
-```
-
-### Search
-
-```bash
-php artisan scout:sync            # Sync full-text search index
-```
-
-### Code Quality
-
-```bash
-./vendor/bin/pint                 # Run Laravel Pint code style fixer
-```
-
-### Testing
-
-```bash
-php artisan test                  # Run Pest test suite
-./vendor/bin/pest                 # Run directly via Pest
+php artisan serve          # HTTP server
+npm run dev                # Vite HMR
+php artisan queue:listen   # Queue worker
+php artisan reverb:start   # WebSocket server
 ```
 
 ---
@@ -752,45 +648,29 @@ php artisan test                  # Run Pest test suite
 ## Additional Notes
 
 ### Authentication
-
-- **Web:** Session-based via Laravel Breeze (email/password + social OAuth)
-- **API:** Token-based via Laravel Sanctum
-- **Social providers:** Google, Facebook, Telegram
-- Email verification is required for new registrations
+- **Web:** Session-based via Laravel Breeze
+- **API:** Token-based via Laravel Sanctum (Bearer token in `Authorization` header)
+- **Social:** Google, Facebook, Telegram via Laravel Socialite
 
 ### Admin Panel
+- TCG Voyager available at `/admin`
+- Seeded with roles (`admin`, `user`) and permissions via `database/seeders/`
 
-- TCG Voyager is available at `/admin`
-- Provides database BREAD UI, menu management, roles, permissions, and settings
-- Seeded with roles and permission data via `database/seeders/`
-
-### Real-Time
-
-- Laravel Reverb handles WebSocket connections
-- Real-time messaging and notification delivery are supported
-- Configure `REVERB_*` variables in `.env` for production
-
-### Queues
-
-- Queue driver is `database`
-- Start a worker with `php artisan queue:listen` (or `queue:work` in production)
+### Search
+- Hybrid approach: PostgreSQL `tsvector` full-text search (Russian) + `pg_trgm` trigram similarity
+- Implemented in `SearchService` — deduplicates and ranks results from both strategies
 
 ### Social Media Auto-Posting
+When a product is created, the app dispatches jobs to:
+1. Post to the configured **Telegram** channel
+2. Create a **Facebook** post via Graph API
+3. Create an **Instagram** carousel post via Graph API
 
-When a product is created, the application automatically:
-1. Sends a message with images and a product link to the configured **Telegram** channel
-2. Creates a **Facebook** post with product images via the Graph API
-3. Creates an **Instagram** carousel post with product images via the Graph API
+Post IDs are stored on the product for future updates/deletions.
 
-The resulting post IDs are stored in `products.telegram_post_id`, `products.facebook_post_id`, and `products.insta_post_id` for future updates or deletions.
+### Queues
+- Driver: `database`
+- Jobs: `PostToSocialMediaJob`, `RemoveFromSocialMediaJob`, `UpdateSocialMediaPostsJob`, `SendFcmNotification`
 
-### Full-Text Search
-
-- Powered by PostgreSQL native `tsvector`
-- Configured for the Russian language in `config/scout.php`
-- Indexes `name`, `description`, and `slug` columns of the `products` table
-
-### Sitemap
-
-- A dynamic XML sitemap is served at `/sitemap.xml`
-- Generated by `SitemapController`
+### Real-Time
+- Laravel Reverb handles WebSocket connections for live messaging and notifications
